@@ -74,25 +74,28 @@ Or build it yourself from source with Go 1.25+: `go build ./cmd/phpscan-local`
 
 ## phpscan-web (online scanner)
 
-A small HTTP service with a one-page UI.
+A small HTTP service with a one-page UI. `GET /api/scan?url=www.example.com`
+returns the result as JSON.
 
-1. `GET /api/token?host=example.com` returns a DNS TXT record to add (`_phpscan.example.com`).
-2. `GET /api/scan?url=https://example.com/` scans the URL, but only after that TXT record is in place.
+Anyone can check any website, and no proof of ownership is needed. The check
+is one ordinary page request, the same as a browser visit, and it reads only
+what the site already sends to every visitor. Public tools such as SSL Labs
+and securityheaders.com work the same way. Active tests that trigger the bug
+belong in an authorized engagement with a signed scope, not in this tool.
 
-This ensures only a domain's owner can scan it. The service refuses to connect
-to private, loopback, link-local and cloud metadata addresses, so it can't be
-used to probe internal networks.
+To keep the service from being misused:
 
-The token is an HMAC of the host name, so the service needs no database.
+- it connects only to public IP addresses, never private, loopback, link-local or cloud metadata ones
+- it checks only ports 80 and 443, so it can't be used as a port scanner
+- it has a rate limit, and it stores no results
 
 ```sh
 docker build -t phpscan-web .
-docker run -p 8080:8080 -e PHPSCAN_SECRET="$(openssl rand -hex 32)" phpscan-web
+docker run -p 8080:8080 phpscan-web
 ```
 
 Deploy the same image to any container-based serverless host (Google Cloud Run,
-Zeabur, Fly.io, AWS App Runner). Set `PHPSCAN_SECRET` and keep it the same
-across deploys, or existing TXT records stop matching.
+Zeabur, Fly.io, AWS App Runner).
 
 ## Development
 

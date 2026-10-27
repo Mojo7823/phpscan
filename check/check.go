@@ -21,7 +21,7 @@ import (
 
 const (
 	RepoURL    = "https://github.com/Mojo7823/phpscan"
-	ContactURL = "https://example.com/contact"         // set to your company's support page
+	ContactURL = "https://example.com/contact" // set to your company's support page
 )
 
 // First fixed release per supported branch (PHP security release, 2026-10-21).

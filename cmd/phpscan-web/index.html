@@ -10,29 +10,35 @@
   body { margin: 0 auto; max-width: 40rem; padding: 2rem 1rem; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
   input, button { font: inherit; padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
   input { width: 100%; box-sizing: border-box; margin: .5rem 0; }
-  button { cursor: pointer; margin-right: .5rem; }
+  button { cursor: pointer; }
   label { font-weight: 600; }
+  a { color: inherit; }
   .muted { color: var(--muted); font-size: .9rem; }
-  #out { margin-top: 1.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #out { margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   #out:empty { display: none; }
   .vulnerable { color: var(--bad); } .likely_vulnerable, .unknown { color: var(--warn); } .patched { color: var(--ok); }
 </style>
 </head>
 <body>
 <h1>PHP2Shell check</h1>
-<p>Checks whether your website runs a PHP version affected by CVE-2026-109618 and CVE-2026-109619.
-We send one ordinary page request, like a browser visit. No attack payloads.</p>
+<p>PHP2Shell (CVE-2026-109618, CVE-2026-109619) lets attackers take over servers that run an outdated PHP.
+Enter your website to see if it is affected.</p>
+<p class="muted">We open your page once, like a browser visit, and read which PHP version it reports.
+No attack, no login, nothing is changed or stored.</p>
 
-<label for="url">Your website address</label>
-<input id="url" type="url" placeholder="https://www.example.com/" autocomplete="url">
-<p class="muted">To make sure only owners can scan a site, first add a DNS TXT record we give you.</p>
-<button id="token">1. Get verification record</button>
-<button id="scan">2. Scan</button>
+<form id="form">
+  <label for="url">Website address</label>
+  <input id="url" inputmode="url" placeholder="www.example.com" autocomplete="url" required>
+  <button>Check</button>
+</form>
 <div id="out" role="status" aria-live="polite"></div>
+
+<p class="muted">Routers, modems and other devices on your office network can be affected too.
+Check them with our free one-time <a href="{{.Repo}}/releases">companion tool</a> (open source).
+Need help? <a href="{{.Contact}}">Talk to our security team</a>.</p>
 
 <script>
   const out = document.getElementById("out");
-  const urlInput = document.getElementById("url");
 
   // Results contain text from the scanned site, so build the report with textContent only.
   function show(lines, status) {
@@ -46,25 +52,11 @@ We send one ordinary page request, like a browser visit. No attack payloads.</p>
     out.className = status || "";
   }
 
-  function host() {
-    try { return new URL(urlInput.value.trim()).hostname; }
-    catch { show([["Error", "Enter a full address, for example https://www.example.com/"]]); return null; }
-  }
-
-  document.getElementById("token").onclick = async () => {
-    const h = host(); if (!h) return;
-    const res = await fetch("/api/token?host=" + encodeURIComponent(h));
-    if (!res.ok) return show([["Error", await res.text()]]);
-    const t = await res.json();
-    show([["Add this DNS record", ""], ["Type", t.type], ["Name", t.name], ["Value", t.value],
-          ["", "DNS changes can take a few minutes to appear. Then press Scan."]]);
-  };
-
-  document.getElementById("scan").onclick = async () => {
-    if (!host()) return;
-    show([["", "Scanning…"]]);
-    const res = await fetch("/api/scan?url=" + encodeURIComponent(urlInput.value.trim()));
-    if (!res.ok) return show([["Error", await res.text()]]);
+  document.getElementById("form").onsubmit = async (e) => {
+    e.preventDefault();
+    show([["", "Checking…"]]);
+    const res = await fetch("/api/scan?url=" + encodeURIComponent(document.getElementById("url").value));
+    if (!res.ok) return show([["", await res.text()]]);
     const r = await res.json();
     const lines = [["Status", r.status.replace(/_/g, " ") + (r.php_version ? " (PHP " + r.php_version + ")" : "")]];
     if (r.product) lines.push(["Device", r.product]);

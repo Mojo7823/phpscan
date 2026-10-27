@@ -1,18 +1,16 @@
-// Command phpscan-web is the online scanner. It checks only sites whose owner
-// has proved control of the domain with a DNS TXT record, and it only connects
-// to public IP addresses.
+// Command phpscan-web is the online scanner. Anyone can check a website: the
+// check is one ordinary page request, the same as a browser visit, so it needs
+// no proof of ownership. It only connects to public IP addresses on the
+// standard web ports, so it can't be used to probe internal networks or ports.
 package main
 
 import (
 	"cmp"
-	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"html/template"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,40 +21,43 @@ import (
 )
 
 //go:embed index.html
-var page []byte
+var page string
 
 func main() {
-	secret := os.Getenv("PHPSCAN_SECRET")
-	if len(secret) < 32 {
-		log.Fatal("set PHPSCAN_SECRET to a random string of at least 32 characters")
-	}
+	tmpl := template.Must(template.New("page").Parse(page))
 	client := check.NewClient(10*time.Second, check.IsPublic)
+
+	// shortcut: one shared limit per instance (burst 30, then 1 scan every 2s); add per-IP limits at the platform or a CDN before a public launch.
+	tokens := make(chan struct{}, 30)
+	for range cap(tokens) {
+		tokens <- struct{}{}
+	}
+	go func() {
+		for range time.Tick(2 * time.Second) {
+			select {
+			case tokens <- struct{}{}:
+			default:
+			}
+		}
+	}()
 
 	http.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(page)
-	})
-	// shortcut: no rate limit; put one in front (platform or proxy) before opening this to the public.
-	http.HandleFunc("GET /api/token", func(w http.ResponseWriter, r *http.Request) {
-		host := strings.ToLower(r.URL.Query().Get("host"))
-		if host == "" || len(host) > 253 {
-			http.Error(w, "missing or invalid host", http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]string{"type": "TXT", "name": "_phpscan." + host, "value": token(secret, host)})
+		tmpl.Execute(w, map[string]string{"Repo": check.RepoURL, "Contact": check.ContactURL})
 	})
 	http.HandleFunc("GET /api/scan", func(w http.ResponseWriter, r *http.Request) {
-		u, err := url.Parse(r.URL.Query().Get("url"))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
-			http.Error(w, "url must be a full http:// or https:// address", http.StatusBadRequest)
+		target, err := parseTarget(r.URL.Query().Get("url"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		host := strings.ToLower(u.Hostname())
-		if !verified(r.Context(), secret, host) {
-			http.Error(w, "domain not verified: add the TXT record from /api/token?host="+host+" and try again", http.StatusForbidden)
+		select {
+		case <-tokens:
+		default:
+			http.Error(w, "Too many checks right now. Please try again in a minute.", http.StatusTooManyRequests)
 			return
 		}
-		writeJSON(w, check.Check(r.Context(), client, u.String()))
+		writeJSON(w, check.Check(r.Context(), client, target))
 	})
 
 	addr := ":" + cmp.Or(os.Getenv("PORT"), "8080")
@@ -64,25 +65,20 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// token is stateless: the same secret and host always give the same value, so no database is needed.
-func token(secret, host string) string {
-	m := hmac.New(sha256.New, []byte(secret))
-	m.Write([]byte(host))
-	return "phpscan-verify=" + hex.EncodeToString(m.Sum(nil))[:32]
-}
-
-func verified(ctx context.Context, secret, host string) bool {
-	records, err := net.DefaultResolver.LookupTXT(ctx, "_phpscan."+host)
-	if err != nil {
-		return false
+// parseTarget accepts a website address as people type it, adding https:// when missing.
+func parseTarget(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
-	want := []byte(token(secret, host))
-	for _, rec := range records {
-		if hmac.Equal([]byte(rec), want) {
-			return true
-		}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return "", errors.New("Enter a website address, for example www.example.com")
 	}
-	return false
+	if p := u.Port(); p != "" && p != "80" && p != "443" {
+		return "", errors.New("Only standard web ports (80 and 443) can be checked")
+	}
+	return u.String(), nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
