@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PHP2Shell Check</title>
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --bad: #b42318; --warn: #b54708; --ok: #067647; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161616; --fg: #eee; --muted: #aaa; --line: #333; --bad: #f97066; --warn: #fdb022; --ok: #47cd89; } }
+  body { margin: 0 auto; max-width: 40rem; padding: 2rem 1rem; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  input, button { font: inherit; padding: .5rem .75rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  input { width: 100%; box-sizing: border-box; margin: .5rem 0; }
+  button { cursor: pointer; margin-right: .5rem; }
+  label { font-weight: 600; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  #out { margin-top: 1.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #out:empty { display: none; }
+  .vulnerable { color: var(--bad); } .likely_vulnerable, .unknown { color: var(--warn); } .patched { color: var(--ok); }
+</style>
+</head>
+<body>
+<h1>PHP2Shell check</h1>
+<p>Checks whether your website runs a PHP version affected by CVE-2026-109618 and CVE-2026-109619.
+We send one ordinary page request, like a browser visit. No attack payloads.</p>
+
+<label for="url">Your website address</label>
+<input id="url" type="url" placeholder="https://www.example.com/" autocomplete="url">
+<p class="muted">To make sure only owners can scan a site, first add a DNS TXT record we give you.</p>
+<button id="token">1. Get verification record</button>
+<button id="scan">2. Scan</button>
+<div id="out" role="status" aria-live="polite"></div>
+
+<script>
+  const out = document.getElementById("out");
+  const urlInput = document.getElementById("url");
+
+  // Results contain text from the scanned site, so build the report with textContent only.
+  function show(lines, status) {
+    out.replaceChildren();
+    for (const [label, text] of lines) {
+      const p = document.createElement("div");
+      if (label) { const b = document.createElement("strong"); b.textContent = label + ": "; p.append(b); }
+      p.append(text);
+      out.append(p);
+    }
+    out.className = status || "";
+  }
+
+  function host() {
+    try { return new URL(urlInput.value.trim()).hostname; }
+    catch { show([["Error", "Enter a full address, for example https://www.example.com/"]]); return null; }
+  }
+
+  document.getElementById("token").onclick = async () => {
+    const h = host(); if (!h) return;
+    const res = await fetch("/api/token?host=" + encodeURIComponent(h));
+    if (!res.ok) return show([["Error", await res.text()]]);
+    const t = await res.json();
+    show([["Add this DNS record", ""], ["Type", t.type], ["Name", t.name], ["Value", t.value],
+          ["", "DNS changes can take a few minutes to appear. Then press Scan."]]);
+  };
+
+  document.getElementById("scan").onclick = async () => {
+    if (!host()) return;
+    show([["", "Scanning…"]]);
+    const res = await fetch("/api/scan?url=" + encodeURIComponent(urlInput.value.trim()));
+    if (!res.ok) return show([["Error", await res.text()]]);
+    const r = await res.json();
+    const lines = [["Status", r.status.replace(/_/g, " ") + (r.php_version ? " (PHP " + r.php_version + ")" : "")]];
+    if (r.product) lines.push(["Device", r.product]);
+    if (r.evidence) lines.push(["Found in", r.evidence.join("; ")]);
+    lines.push(["What to do", r.advice]);
+    if (r.error) lines.push(["Error", r.error]);
+    if (r.contact) lines.push(["Need help?", "Contact us: " + r.contact]);
+    show(lines, r.status);
+  };
+</script>
+</body>
+</html>
